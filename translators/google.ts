@@ -2,7 +2,7 @@ import { requestUrl } from 'obsidian';
 import { Translator } from './index';
 
 export class GoogleAITranslator implements Translator {
-    async translate(content: string, apiKey: string, model: string, temperature: number, maxTokens: number): Promise<string> {
+    async translate(content: string, apiKey: string, model: string, temperature: number, maxTokens: number, customEndpoint?: string, targetLanguage?: string): Promise<string> {
         const response = await requestUrl({
             url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
             method: 'POST',
@@ -12,7 +12,7 @@ export class GoogleAITranslator implements Translator {
             body: JSON.stringify({
                 contents: [{
                     parts: [{
-                        text: `Translate the following markdown document to English, preserving all markdown formatting:\n\n${content}`
+                        text: `Translate the following markdown document to ${targetLanguage}, preserving all markdown formatting:\n\n${content}`
                     }]
                 }],
                 generationConfig: {
