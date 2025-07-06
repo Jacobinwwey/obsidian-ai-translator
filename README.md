@@ -8,12 +8,23 @@ An Obsidian plugin to translate your notes using multiple Large Language Models 
     - OpenAI (e.g., GPT-4o, GPT-3.5-turbo)
     - Google AI (e.g., Gemini Pro)
     - Anthropic (e.g., Claude 3.5 Sonnet, Claude 2.1)
-- **Format Preservation**: Translates the content of your notes while meticulously preserving the original Markdown formatting.
+    - Deepseek
+    - Mistral
+    - OpenRouter
+    - Azure OpenAI
+    - Ollama
+    - LMStudio
+- **Interactive Sidebar**: A dedicated sidebar for easy access to translation controls, real-time progress updates, and detailed logs.
+- **Real-time Progress & Logging**: Monitor translation progress with a visual bar and detailed log messages directly in the sidebar.
+- **Cancellation**: Stop ongoing translation processes at any time.
+- **API Connection Test**: A dedicated button in settings to verify your API key and endpoint configuration.
+- **Format Preservation**: Translates the content of your notes while meticulously preserving the original Markdown formatting. **The translation prompt explicitly instructs the LLM to maintain the original document structure and only translate the content without modifying the original text.**
 - **Side-by-Side Comparison**: After translation, the translated note automatically opens in a new, split-screen pane for easy and immediate comparison with the original document.
 - **Advanced Configuration**: Fine-tune the translation process to your needs:
     - **Model Selection**: Choose the specific model for each provider.
     - **Temperature Control**: Adjust the creativity and randomness of the translation.
     - **Max Tokens**: Set a limit on the length of the translation.
+    - **Custom Endpoint**: Specify a custom API endpoint for providers like Azure OpenAI, Ollama, and LMStudio.
 - **Custom Output Path**: Specify a custom directory to store your translated files.
 
 ## Getting Started
@@ -36,9 +47,10 @@ An Obsidian plugin to translate your notes using multiple Large Language Models 
 ### How to Translate
 
 1.  Open the note you wish to translate.
-2.  Open the command palette (`Ctrl+P` or `Cmd+P`).
-3.  Search for "Translate and Compare File" and execute the command.
-4.  The plugin will translate the document, save it to your specified output path, and open it in a new pane.
+2.  Click the new "AI Translator" ribbon icon (looks like a language icon) in the left sidebar to open the plugin sidebar.
+3.  Click the "Translate Active File" button in the sidebar.
+4.  Alternatively, open the command palette (`Ctrl+P` or `Cmd+P`), search for "Translate and Compare File" and execute the command.
+5.  The plugin will translate the document, save it to your specified output path, and open it in a new pane. You can monitor the progress and logs in the sidebar.
 
 ## Author
 

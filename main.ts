@@ -1,86 +1,155 @@
-import { App, Notice, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
+import { App, Notice, Plugin, TFile, WorkspaceLeaf } from 'obsidian';
 import { createTranslator } from './translators/factory';
-
-interface AITranslatorSettings {
-	apiKey: string;
-	llmProvider: string;
-	outputPath: string;
-    model: string;
-    temperature: number;
-    maxTokens: number;
-    customEndpoint: string;
-    targetLanguage: string;
-}
-
-const DEFAULT_SETTINGS: AITranslatorSettings = {
-	apiKey: '',
-	llmProvider: 'openai',
-	outputPath: 'translations',
-    model: 'gpt-4o',
-    temperature: 0.7,
-    maxTokens: 2048,
-    customEndpoint: '',
-    targetLanguage: 'English'
-}
+import { AITranslatorSettings } from './types';
+import { DEFAULT_SETTINGS, TRANSLATOR_SIDEBAR_VIEW_TYPE, TRANSLATOR_SIDEBAR_DISPLAY_TEXT, TRANSLATOR_SIDEBAR_ICON } from './constants';
+import { AITranslatorSettingTab } from './ui/AITranslatorSettingTab';
+import { AITranslatorSidebarView } from './ui/AITranslatorSidebarView';
 
 export default class AITranslatorPlugin extends Plugin {
-	settings: AITranslatorSettings;
+    settings: AITranslatorSettings;
+    statusBarItem: HTMLElement;
+    private isBusy: boolean = false;
+    private abortController: AbortController | null = null;
 
-	async onload() {
-		await this.loadSettings();
+    public getIsBusy(): boolean {
+        return this.isBusy;
+    }
 
-        // Add a ribbon icon
-        this.addRibbonIcon('language', 'Translate Document', () => {
-            this.translateAndCompareFile();
+    public setBusy(busy: boolean) {
+        this.isBusy = busy;
+    }
+
+    async onload() {
+        await this.loadSettings();
+
+        // --- Sidebar View ---
+        this.registerView(
+            TRANSLATOR_SIDEBAR_VIEW_TYPE,
+            (leaf) => new AITranslatorSidebarView(leaf, this)
+        );
+        const ribbonIconEl = this.addRibbonIcon(TRANSLATOR_SIDEBAR_ICON, TRANSLATOR_SIDEBAR_DISPLAY_TEXT, () => this.activateView());
+        ribbonIconEl.addClass('translator-ribbon-class');
+        this.addCommand({ id: 'open-translator-sidebar', name: 'Open sidebar', callback: () => this.activateView() });
+
+        // --- Status Bar ---
+        this.statusBarItem = this.addStatusBarItem();
+        this.updateStatusBar('Ready');
+
+        this.addCommand({
+            id: 'translate-and-compare-file',
+            name: 'Translate and Compare File',
+            callback: () => this.translateAndCompareFile()
         });
 
-		this.addCommand({
-			id: 'translate-and-compare-file',
-			name: 'Translate and Compare File',
-			callback: () => this.translateAndCompareFile()
-		});
+        this.addSettingTab(new AITranslatorSettingTab(this.app, this));
+    }
 
-		this.addSettingTab(new AITranslatorSettingTab(this.app, this));
-	}
+    onunload() {
 
-	onunload() {
+    }
 
-	}
+    async loadSettings() {
+        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    }
 
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-	}
+    async saveSettings() {
+        await this.saveData(this.settings);
+    }
 
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
+    updateStatusBar(text: string) {
+        if (this.statusBarItem) {
+            this.statusBarItem.setText(`Translator: ${text}`);
+        }
+    }
+
+    async activateView() {
+        const existingLeaves = this.app.workspace.getLeavesOfType(TRANSLATOR_SIDEBAR_VIEW_TYPE);
+        if (existingLeaves.length > 0) {
+            this.app.workspace.revealLeaf(existingLeaves[0]);
+            return;
+        }
+        const leaf = this.app.workspace.getRightLeaf(false);
+        if (leaf) {
+            await leaf.setViewState({ type: TRANSLATOR_SIDEBAR_VIEW_TYPE, active: true });
+            this.app.workspace.revealLeaf(leaf);
+        } else {
+            console.error("Could not get right sidebar leaf.");
+            new Notice("Could not open Translator sidebar.");
+        }
+    }
+
+    getSidebarView(): AITranslatorSidebarView | null {
+        const leaf = this.app.workspace.getLeavesOfType(TRANSLATOR_SIDEBAR_VIEW_TYPE)[0];
+        if (leaf && leaf.view instanceof AITranslatorSidebarView) {
+            return leaf.view;
+        }
+        return null;
+    }
+
+    cancelTranslation() {
+        if (this.abortController) {
+            this.abortController.abort();
+            this.isBusy = false;
+            this.updateStatusBar('Cancelled');
+            this.getSidebarView()?.updateStatus('Cancelled', -1);
+        }
+    }
 
     async translateAndCompareFile() {
-        const activeFile = this.app.workspace.getActiveFile();
-        if (!activeFile) {
-            new Notice('No active file to translate.');
+        if (this.isBusy) {
+            new Notice("Translator is busy.");
             return;
         }
-
-        if (!this.settings.apiKey) {
-            new Notice('API key is not set. Please configure it in the plugin settings.');
-            return;
-        }
-
-        new Notice('Translating document...');
-        const fileContent = await this.app.vault.read(activeFile);
+        this.isBusy = true;
+        this.abortController = new AbortController();
+        const sidebar = this.getSidebarView();
+        sidebar?.clearDisplay();
+        sidebar?.log('Starting translation...');
+        this.updateStatusBar('Translating...');
 
         try {
+            const activeFile = this.app.workspace.getActiveFile();
+            if (!activeFile) {
+                throw new Error('No active file to translate.');
+            }
+
+            if (!this.settings.providerSettings[this.settings.llmProvider].apiKey) {
+                throw new Error('API key is not set for the selected provider. Please configure it in the plugin settings.');
+            }
+
+            sidebar?.updateStatus('Reading file...', 10);
+            const fileContent = await this.app.vault.read(activeFile);
+
             const translator = createTranslator(this.settings.llmProvider);
-            const translatedContent = await translator.translate(
-                fileContent,
-                this.settings.apiKey,
-                this.settings.model,
-                this.settings.temperature,
-                this.settings.maxTokens,
-                this.settings.customEndpoint,
-                this.settings.targetLanguage
-            );
+            const { apiKey, model, customEndpoint } = this.settings.providerSettings[this.settings.llmProvider];
+            
+            let translatedContent = '';
+            let retries = 3;
+            for (let i = 0; i < retries; i++) {
+                try {
+                    sidebar?.updateStatus(`Translating (attempt ${i + 1})...`, 20 + (i * 20));
+                    translatedContent = await translator.translate(
+                        fileContent,
+                        apiKey,
+                        model,
+                        this.settings.temperature,
+                        this.settings.maxTokens,
+                        customEndpoint,
+                        this.settings.targetLanguage,
+                        this.abortController.signal
+                    );
+                    break; 
+                } catch (error) {
+                    if (this.abortController.signal.aborted) {
+                        throw new Error('Translation cancelled');
+                    }
+                    if (i === retries - 1) throw error;
+                    sidebar?.log(`Translation attempt ${i + 1} failed. Retrying...`);
+                    await new Promise(res => setTimeout(res, 2000));
+                }
+            }
+
+            sidebar?.updateStatus('Creating translated file...', 80);
             const newFileName = `${activeFile.basename}.translated.md`;
             const newFilePath = `${this.settings.outputPath}/${newFileName}`;
 
@@ -91,163 +160,28 @@ export default class AITranslatorPlugin extends Plugin {
             }
 
             const newFile = await this.app.vault.create(newFilePath, translatedContent);
-            new Notice('Translation complete.');
+            sidebar?.updateStatus('Opening files...', 90);
 
-            // Open original file in the left pane
             const originalLeaf = this.app.workspace.getLeaf('split', 'horizontal');
             await originalLeaf.openFile(activeFile);
 
-            // Open translated file in the right pane
             const translatedLeaf = this.app.workspace.getLeaf('split', 'vertical');
             await translatedLeaf.openFile(newFile);
 
+            sidebar?.updateStatus('Translation complete!', 100);
+            new Notice('Translation complete.');
+
         } catch (error) {
-            console.error('Translation Error:', error);
-            new Notice('Error during translation. Check the console for details.');
+            if (error.message !== 'Translation cancelled') {
+                console.error('Translation Error:', error);
+                new Notice('Error during translation. Check the console for details.');
+                sidebar?.log(`Error: ${error.message}`);
+                sidebar?.updateStatus('Error', -1);
+            }
+        } finally {
+            this.isBusy = false;
+            this.abortController = null;
+            this.updateStatusBar('Ready');
         }
     }
-}
-
-class AITranslatorSettingTab extends PluginSettingTab {
-	plugin: AITranslatorPlugin;
-
-	constructor(app: App, plugin: AITranslatorPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
-
-	display(): void {
-		const {containerEl} = this;
-
-		containerEl.empty();
-
-		new Setting(containerEl)
-			.setName('API Key')
-			.setDesc('Your API key for the selected LLM provider.')
-			.addText(text => text
-				.setPlaceholder('Enter your API key')
-				.setValue(this.plugin.settings.apiKey)
-				.onChange(async (value) => {
-					this.plugin.settings.apiKey = value;
-					await this.plugin.saveSettings();
-				}));
-
-		const providerSetting = new Setting(containerEl)
-			.setName('LLM Provider')
-			.setDesc('Choose the Large Language Model provider.')
-			.addDropdown(dropdown => dropdown
-				.addOption('openai', 'OpenAI')
-				.addOption('google', 'Google AI')
-				.addOption('anthropic', 'Anthropic')
-                .addOption('deepseek', 'Deepseek')
-                .addOption('mistral', 'Mistral')
-                .addOption('openrouter', 'OpenRouter')
-                .addOption('azureopenai', 'Azure OpenAI')
-                .addOption('openai-compatible', 'OpenAI Compatible (LMStudio/Ollama)')
-				.setValue(this.plugin.settings.llmProvider)
-				.onChange(async (value) => {
-					this.plugin.settings.llmProvider = value;
-					await this.plugin.saveSettings();
-                    this.display(); // Re-render to show/hide custom endpoint setting
-				}));
-
-        const customEndpointSetting = new Setting(containerEl)
-            .setName('Custom Endpoint')
-            .setDesc('Custom API endpoint for OpenAI Compatible or Azure OpenAI providers.')
-            .addText(text => text
-                .setPlaceholder('e.g., http://localhost:1234/v1 or your Azure OpenAI endpoint')
-                .setValue(this.plugin.settings.customEndpoint)
-                .onChange(async (value) => {
-                    this.plugin.settings.customEndpoint = value;
-                    await this.plugin.saveSettings();
-                }));
-        
-        // Conditionally show custom endpoint setting
-        customEndpointSetting.settingEl.toggle(
-            this.plugin.settings.llmProvider === 'openai-compatible' ||
-            this.plugin.settings.llmProvider === 'azureopenai'
-        );
-
-        new Setting(containerEl)
-            .setName('Model')
-            .setDesc('The model to use for translation.')
-            .addText(text => text
-                .setPlaceholder('e.g., gpt-4o')
-                .setValue(this.plugin.settings.model)
-                .onChange(async (value) => {
-                    this.plugin.settings.model = value;
-                    await this.plugin.saveSettings();
-                }));
-
-        new Setting(containerEl)
-            .setName('Temperature')
-            .setDesc('Controls randomness. Higher values make the output more random.')
-            .addSlider(slider => slider
-                .setLimits(0, 1, 0.1)
-                .setValue(this.plugin.settings.temperature)
-                .setDynamicTooltip()
-                .onChange(async (value) => {
-                    this.plugin.settings.temperature = value;
-                    await this.plugin.saveSettings();
-                }));
-
-        new Setting(containerEl)
-            .setName('Max Tokens')
-            .setDesc('The maximum number of tokens to generate.')
-            .addText(text => text
-                .setPlaceholder('e.g., 2048')
-                .setValue(this.plugin.settings.maxTokens.toString())
-                .onChange(async (value) => {
-                    this.plugin.settings.maxTokens = parseInt(value);
-                    await this.plugin.saveSettings();
-                }));
-		
-		new Setting(containerEl)
-            .setName('Target Language')
-            .setDesc('The language to translate the document into.')
-            .addDropdown(dropdown => {
-                const COMMON_LANGUAGES = {
-                    'English': 'English',
-                    'Spanish': 'Español',
-                    'French': 'Français',
-                    'German': 'Deutsch',
-                    'Chinese': '中文',
-                    'Japanese': '日本語',
-                    'Korean': '한국어',
-                    'Russian': 'Русский',
-                    'Portuguese': 'Português',
-                    'Italian': 'Italiano',
-                    'Arabic': 'العربية',
-                    'Hindi': 'हिन्दी',
-                    'Bengali': 'বাংলা',
-                    'Dutch': 'Nederlands',
-                    'Turkish': 'Türkçe',
-                    'Vietnamese': 'Tiếng Việt',
-                    'Polish': 'Polski',
-                    'Thai': 'ไทย',
-                    'Swedish': 'Svenska',
-                    'Indonesian': 'Bahasa Indonesia'
-                };
-                for (const langKey in COMMON_LANGUAGES) {
-                    dropdown.addOption(langKey as keyof typeof COMMON_LANGUAGES, COMMON_LANGUAGES[langKey as keyof typeof COMMON_LANGUAGES]);
-                }
-                dropdown
-                    .setValue(this.plugin.settings.targetLanguage)
-                    .onChange(async (value) => {
-                        this.plugin.settings.targetLanguage = value;
-                        await this.plugin.saveSettings();
-                    });
-            });
-
-		new Setting(containerEl)
-			.setName('Output Path')
-			.setDesc('Path to save translated files.')
-			.addText(text => text
-				.setPlaceholder('e.g., translations/')
-				.setValue(this.plugin.settings.outputPath)
-				.onChange(async (value) => {
-					this.plugin.settings.outputPath = value;
-					await this.plugin.saveSettings();
-				}));
-	}
 }

@@ -6,11 +6,12 @@ import { DeepseekTranslator } from './deepseek';
 import { MistralTranslator } from './mistral';
 import { OpenRouterTranslator } from './openrouter';
 import { AzureOpenAITranslator } from './azureopenai';
+import { OllamaTranslator } from './ollama';
+import { LMStudioTranslator } from './lmstudio';
 
 export function createTranslator(provider: string): Translator {
     switch (provider) {
         case 'openai':
-        case 'openai-compatible': // For LMStudio/Ollama
             return new OpenAITranslator();
         case 'google':
             return new GoogleAITranslator();
@@ -24,6 +25,10 @@ export function createTranslator(provider: string): Translator {
             return new OpenRouterTranslator();
         case 'azureopenai':
             return new AzureOpenAITranslator();
+        case 'ollama':
+            return new OllamaTranslator();
+        case 'lmstudio':
+            return new LMStudioTranslator();
         default:
             throw new Error(`Unsupported provider: ${provider}`);
     }

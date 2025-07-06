@@ -2,10 +2,10 @@ import { requestUrl } from 'obsidian';
 import { Translator } from './index';
 
 export class DeepseekTranslator implements Translator {
-    async translate(content: string, apiKey: string, model: string, temperature: number, maxTokens: number, customEndpoint?: string, targetLanguage?: string): Promise<string> {
+    async translate(content: string, apiKey: string, model: string, temperature: number, maxTokens: number, customEndpoint?: string, targetLanguage?: string, signal?: AbortSignal): Promise<string> {
         const apiUrl = customEndpoint || 'https://api.deepseek.com/chat/completions';
         const response = await requestUrl({
-            url: apiUrl, // Deepseek API endpoint
+            url: apiUrl,
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${apiKey}`,
@@ -22,5 +22,22 @@ ${content}` }],
         });
         const data = response.json;
         return data.choices[0].message.content;
+    }
+
+    async testConnection(apiKey: string, model: string, customEndpoint?: string): Promise<void> {
+        const apiUrl = customEndpoint || 'https://api.deepseek.com/chat/completions';
+        await requestUrl({
+            url: apiUrl,
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: model,
+                messages: [{ role: "user", content: "Hello, world!" }],
+                max_tokens: 5
+            })
+        });
     }
 }
