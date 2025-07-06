@@ -1,8 +1,57 @@
-/*
+.translator-progress-modal {
+    min-width: 600px;
+}
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.translator-progress-bar-container {
+    width: 100%;
+    background-color: #ccc;
+    border-radius: 5px;
+    margin: 10px 0;
+}
 
-If your plugin does not need CSS, delete this file.
+.translator-progress-bar-fill {
+    height: 20px;
+    background-color: #4caf50;
+    border-radius: 5px;
+    text-align: center;
+    line-height: 20px;
+    color: white;
+    width: calc(1% * attr(data-progress number, 0));
+}
 
-*/
+.translator-progress-bar-fill.is-error {
+    background-color: #f44336;
+}
+
+.translator-log-output {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #ccc;
+    padding: 10px;
+    margin-top: 10px;
+    font-family: monospace;
+    font-size: 12px;
+}
+
+.translator-log-entry {
+    margin-bottom: 5px;
+}
+
+.translator-log-time {
+    color: #999;
+    margin-right: 10px;
+}
+
+.translator-status-text {
+    font-weight: bold;
+}
+
+.translator-time-remaining {
+    font-style: italic;
+    color: #666;
+}
+
+.translator-button-container {
+    text-align: right;
+    margin-top: 15px;
+}

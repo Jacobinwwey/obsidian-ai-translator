@@ -1,8 +1,9 @@
 
 import { ItemView, WorkspaceLeaf, Notice } from 'obsidian';
 import AITranslatorPlugin from '../main';
+import { ProgressReporter } from '../types';
 
-export class AITranslatorSidebarView extends ItemView {
+export class AITranslatorSidebarView extends ItemView implements ProgressReporter {
     plugin: AITranslatorPlugin;
     private statusEl: HTMLElement | null = null;
     private progressEl: HTMLElement | null = null;
@@ -10,6 +11,8 @@ export class AITranslatorSidebarView extends ItemView {
     private logEl: HTMLElement | null = null;
     private logContent: string[] = [];
     private cancelButton: HTMLButtonElement | null = null;
+    private isCancelled: boolean = false;
+    public abortController: AbortController | null = null;
 
     constructor(leaf: WorkspaceLeaf, plugin: AITranslatorPlugin) {
         super(leaf);
@@ -24,7 +27,25 @@ export class AITranslatorSidebarView extends ItemView {
         return 'AI Translator';
     }
 
+    get cancelled() {
+        return this.isCancelled;
+    }
+
+    requestCancel() {
+        if (!this.isCancelled) {
+            this.isCancelled = true;
+            this.abortController?.abort();
+            this.updateStatus('Cancelling...', -1);
+            this.log('User requested cancellation.');
+            if (this.cancelButton) {
+                this.cancelButton.disabled = true;
+            }
+        }
+    }
+
     clearDisplay() {
+        this.isCancelled = false;
+        this.abortController = null;
         this.logContent = [];
         if (this.logEl) this.logEl.empty();
         if (this.statusEl) this.statusEl.setText('Ready');

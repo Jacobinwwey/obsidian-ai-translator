@@ -1,13 +1,14 @@
-
 import { App, PluginSettingTab, Setting, Notice } from 'obsidian';
 import AITranslatorPlugin from '../main';
 import { testAPI } from '../llmUtils';
+import { DEFAULT_SETTINGS } from '../constants';
 
 export class AITranslatorSettingTab extends PluginSettingTab {
 	plugin: AITranslatorPlugin;
 
 	constructor(app: App, plugin: AITranslatorPlugin) {
 		super(app, plugin);
+
 		this.plugin = plugin;
 	}
 
@@ -77,11 +78,10 @@ export class AITranslatorSettingTab extends PluginSettingTab {
                     }));
 
             new Setting(containerEl)
-                .setName('Test API Connection')
-                .setDesc('Click to test if the API connection is working with the current settings.')
+                .setName(`Test ${this.plugin.settings.llmProvider} connection`)
+                .setDesc('Verify API key, endpoint, and model accessibility.')
                 .addButton(button => button
-                    .setButtonText('Test Connection')
-                    .setCta()
+                    .setButtonText('Test connection').setCta()
                     .onClick(async () => {
                         button.setDisabled(true).setButtonText('Testing...');
                         const testingNotice = new Notice(`Testing connection to ${this.plugin.settings.llmProvider}...`, 0);
@@ -96,7 +96,7 @@ export class AITranslatorSettingTab extends PluginSettingTab {
                             new Notice(`Error during connection test: ${message}`, 10000);
                             console.error(`Error testing ${this.plugin.settings.llmProvider} connection from settings:`, error);
                         } finally {
-                            button.setDisabled(false).setButtonText('Test Connection');
+                            button.setDisabled(false).setButtonText('Test connection');
                         }
                     }));
         }
@@ -173,5 +173,15 @@ export class AITranslatorSettingTab extends PluginSettingTab {
 					this.plugin.settings.outputPath = value;
 					await this.plugin.saveSettings();
 				}));
+
+        new Setting(containerEl).setName('Stable API calls').setHeading();
+        new Setting(containerEl)
+            .setName('Enable stable API calls (retry logic)')
+            .setDesc('On: Automatically retry failed LLM API calls. Off: Fail on first error.')
+            .addToggle(toggle => toggle.setValue(this.plugin.settings.enableStableApiCall).onChange(async (value) => { this.plugin.settings.enableStableApiCall = value; await this.plugin.saveSettings(); this.display(); }));
+        if (this.plugin.settings.enableStableApiCall) {
+            new Setting(containerEl).setName('Retry interval (seconds)').setDesc('Wait time between retries.').addText(text => text.setPlaceholder(String(DEFAULT_SETTINGS.apiCallInterval)).setValue(String(this.plugin.settings.apiCallInterval)).onChange(async (value) => { const num = parseInt(value, 10); if (!isNaN(num) && num >= 1 && num <= 300) { this.plugin.settings.apiCallInterval = num; } else { this.plugin.settings.apiCallInterval = DEFAULT_SETTINGS.apiCallInterval; } await this.plugin.saveSettings(); this.display(); }));
+            new Setting(containerEl).setName('Maximum retries').setDesc('Max retry attempts.').addText(text => text.setPlaceholder(String(DEFAULT_SETTINGS.apiCallMaxRetries)).setValue(String(this.plugin.settings.apiCallMaxRetries)).onChange(async (value) => { const num = parseInt(value, 10); if (!isNaN(num) && num >= 0 && num <= 10) { this.plugin.settings.apiCallMaxRetries = num; } else { this.plugin.settings.apiCallMaxRetries = DEFAULT_SETTINGS.apiCallMaxRetries; } await this.plugin.saveSettings(); this.display(); }));
+        }
 	}
 }

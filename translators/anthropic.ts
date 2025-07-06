@@ -1,41 +1,21 @@
-import { requestUrl } from 'obsidian';
-import { Translator } from './index';
+import { TranslationProvider, AITranslatorSettings, ProgressReporter } from '../types';
+import { executeAnthropicApi, callApiWithRetry } from '../llmUtils';
 
-export class AnthropicTranslator implements Translator {
-    async translate(content: string, apiKey: string, model: string, temperature: number, maxTokens: number, customEndpoint?: string, targetLanguage?: string, signal?: AbortSignal): Promise<string> {
-        const response = await requestUrl({
-            url: customEndpoint || 'https://api.anthropic.com/v1/messages',
-            method: 'POST',
-            headers: {
-                'x-api-key': apiKey,
-                'anthropic-version': '2023-06-01',
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                model: model,
-                max_tokens: maxTokens,
-                temperature: temperature,
-                messages: [{ role: "user", content: `Translate the following markdown document to ${targetLanguage}, preserving all markdown formatting:\n\n${content}` }]
-            })
-        });
-        const data = response.json;
-        return data.content[0].text;
-    }
+export class AnthropicTranslator implements TranslationProvider {
+    name = 'anthropic';
 
-    async testConnection(apiKey: string, model: string, customEndpoint?: string): Promise<void> {
-        await requestUrl({
-            url: customEndpoint || 'https://api.anthropic.com/v1/messages',
-            method: 'POST',
-            headers: {
-                'x-api-key': apiKey,
-                'anthropic-version': '2023-06-01',
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                model: model,
-                max_tokens: 5,
-                messages: [{ role: "user", content: "Hello, world!" }]
-            })
-        });
+    async translate(text: string, targetLanguage: string, settings: AITranslatorSettings, progressReporter: ProgressReporter): Promise<string> {
+        const providerConfig = settings.providerSettings[this.name];
+        const prompt = `Translate the following markdown document to ${targetLanguage}. It is crucial to preserve ALL markdown formatting, including headings, lists, code blocks, tables, links, and especially image links and their layout. Do NOT add any extra text, comments, or explanations. Only provide the translated content.`;
+        
+        return callApiWithRetry(
+            this.name,
+            providerConfig,
+            prompt,
+            text,
+            settings,
+            progressReporter,
+            (config, p, c, signal, s) => executeAnthropicApi(config, p, c, signal, s, progressReporter)
+        );
     }
 }

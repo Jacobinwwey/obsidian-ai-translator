@@ -1,1 +1,21 @@
-import { requestUrl } from 'obsidian';import { Translator } from './index';export class OllamaTranslator implements Translator {    async translate(content: string, apiKey: string, model: string, temperature: number, maxTokens: number, customEndpoint?: string, targetLanguage?: string, signal?: AbortSignal): Promise<string> {        const apiUrl = customEndpoint || 'http://localhost:11434/api/chat';        const response = await requestUrl({            url: apiUrl,            method: 'POST',            headers: {                'Content-Type': 'application/json'            },            body: JSON.stringify({                model: model,                messages: [{ role: "user", content: `Translate the following markdown document to ${targetLanguage}, preserving all markdown formatting:\n\n${content}` }],                options: {                    temperature: temperature,                    num_predict: maxTokens                },                stream: false            })        });        const data = response.json;        return data.message.content;    }    async testConnection(apiKey: string, model: string, customEndpoint?: string): Promise<void> {        const apiUrl = customEndpoint || 'http://localhost:11434/api/chat';        await requestUrl({            url: apiUrl,            method: 'POST',            headers: {                'Content-Type': 'application/json'            },            body: JSON.stringify({                model: model,                messages: [{ role: "user", content: "Hello, world!" }],                options: {                    num_predict: 5                },                stream: false            })        });    }}
+import { TranslationProvider, AITranslatorSettings, ProgressReporter } from '../types';
+import { executeOllamaApi, callApiWithRetry } from '../llmUtils';
+
+export class OllamaTranslator implements TranslationProvider {
+    name = 'ollama';
+
+    async translate(text: string, targetLanguage: string, settings: AITranslatorSettings, progressReporter: ProgressReporter): Promise<string> {
+        const providerConfig = settings.providerSettings[this.name];
+        const prompt = `Translate the following markdown document to ${targetLanguage}. It is crucial to preserve ALL markdown formatting, including headings, lists, code blocks, tables, links, and especially image links and their layout. Do NOT add any extra text, comments, or explanations. Only provide the translated content.`;
+        
+        return callApiWithRetry(
+            this.name,
+            providerConfig,
+            prompt,
+            text,
+            settings,
+            progressReporter,
+            (config, p, c, signal, s) => executeOllamaApi(config, p, c, signal, s, progressReporter)
+        );
+    }
+}

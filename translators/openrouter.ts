@@ -1,1 +1,21 @@
-import { requestUrl } from 'obsidian';import { Translator } from './index';export class OpenRouterTranslator implements Translator {    async translate(content: string, apiKey: string, model: string, temperature: number, maxTokens: number, customEndpoint?: string, targetLanguage?: string, signal?: AbortSignal): Promise<string> {        const apiUrl = customEndpoint || 'https://openrouter.ai/api/v1/chat/completions';        const response = await requestUrl({            url: apiUrl,            method: 'POST',            headers: {                'Authorization': `Bearer ${apiKey}`,                'Content-Type': 'application/json'            },            body: JSON.stringify({                model: model,                messages: [{ role: "user", content: `Translate the following markdown document to ${targetLanguage}, preserving all markdown formatting:\n\n${content}` }],                temperature: temperature,                max_tokens: maxTokens            })        });        const data = response.json;        return data.choices[0].message.content;    }    async testConnection(apiKey: string, model: string, customEndpoint?: string): Promise<void> {        const apiUrl = customEndpoint || 'https://openrouter.ai/api/v1/chat/completions';        await requestUrl({            url: apiUrl,            method: 'POST',            headers: {                'Authorization': `Bearer ${apiKey}`,                'Content-Type': 'application/json'            },            body: JSON.stringify({                model: model,                messages: [{ role: "user", content: "Hello, world!" }],                max_tokens: 5            })        });    }}
+import { TranslationProvider, AITranslatorSettings, ProgressReporter } from '../types';
+import { executeOpenRouterApi, callApiWithRetry } from '../llmUtils';
+
+export class OpenRouterTranslator implements TranslationProvider {
+    name = 'openrouter';
+
+    async translate(text: string, targetLanguage: string, settings: AITranslatorSettings, progressReporter: ProgressReporter): Promise<string> {
+        const providerConfig = settings.providerSettings[this.name];
+        const prompt = `Translate the following markdown document to ${targetLanguage}. It is crucial to preserve ALL markdown formatting, including headings, lists, code blocks, tables, links, and especially image links and their layout. Do NOT add any extra text, comments, or explanations. Only provide the translated content.`;
+        
+        return callApiWithRetry(
+            this.name,
+            providerConfig,
+            prompt,
+            text,
+            settings,
+            progressReporter,
+            (config, p, c, signal, s) => executeOpenRouterApi(config, p, c, signal, s, progressReporter)
+        );
+    }
+}

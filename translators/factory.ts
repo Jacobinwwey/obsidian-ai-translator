@@ -1,4 +1,4 @@
-import { Translator } from './index';
+import { TranslationProvider } from '../types';
 import { OpenAITranslator } from './openai';
 import { GoogleAITranslator } from './google';
 import { AnthropicTranslator } from './anthropic';
@@ -9,7 +9,7 @@ import { AzureOpenAITranslator } from './azureopenai';
 import { OllamaTranslator } from './ollama';
 import { LMStudioTranslator } from './lmstudio';
 
-export function createTranslator(provider: string): Translator {
+export function createTranslator(provider: string): TranslationProvider {
     switch (provider) {
         case 'openai':
             return new OpenAITranslator();

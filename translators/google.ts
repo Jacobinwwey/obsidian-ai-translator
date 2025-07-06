@@ -1,1 +1,21 @@
-import { requestUrl } from 'obsidian';import { Translator } from './index';export class GoogleAITranslator implements Translator {    async translate(content: string, apiKey: string, model: string, temperature: number, maxTokens: number, customEndpoint?: string, targetLanguage?: string, signal?: AbortSignal): Promise<string> {        const response = await requestUrl({            url: `${customEndpoint || 'https://generativelanguage.googleapis.com/v1beta/models'}/${model}:generateContent?key=${apiKey}`,            method: 'POST',            headers: {                'Content-Type': 'application/json'            },            body: JSON.stringify({                contents: [{                    parts: [{                        text: `Translate the following markdown document to ${targetLanguage}, preserving all markdown formatting:\n\n${content}`                    }]                }],                generationConfig: {                    temperature: temperature,                    maxOutputTokens: maxTokens                }            })        });        const data = response.json;        return data.candidates[0].content.parts[0].text;    }    async testConnection(apiKey: string, model: string, customEndpoint?: string): Promise<void> {        await requestUrl({            url: `${customEndpoint || 'https://generativelanguage.googleapis.com/v1beta/models'}/${model}:generateContent?key=${apiKey}`,            method: 'POST',            headers: {                'Content-Type': 'application/json'            },            body: JSON.stringify({                contents: [{                    parts: [{                        text: "Hello, world!"                    }]                }],                generationConfig: {                    maxOutputTokens: 5                }            })        });    }}
+import { TranslationProvider, AITranslatorSettings, ProgressReporter } from '../types';
+import { executeGoogleApi, callApiWithRetry } from '../llmUtils';
+
+export class GoogleAITranslator implements TranslationProvider {
+    name = 'google';
+
+    async translate(text: string, targetLanguage: string, settings: AITranslatorSettings, progressReporter: ProgressReporter): Promise<string> {
+        const providerConfig = settings.providerSettings[this.name];
+        const prompt = `Translate the following markdown document to ${targetLanguage}. It is crucial to preserve ALL markdown formatting, including headings, lists, code blocks, tables, links, and especially image links and their layout. Do NOT add any extra text, comments, or explanations. Only provide the translated content.`;
+        
+        return callApiWithRetry(
+            this.name,
+            providerConfig,
+            prompt,
+            text,
+            settings,
+            progressReporter,
+            (config, p, c, signal, s) => executeGoogleApi(config, p, c, signal, s, progressReporter)
+        );
+    }
+}

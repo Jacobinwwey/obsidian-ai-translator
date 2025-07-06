@@ -1,15 +1,16 @@
 import { App, Notice, Plugin, TFile, WorkspaceLeaf } from 'obsidian';
 import { createTranslator } from './translators/factory';
-import { AITranslatorSettings } from './types';
+import { AITranslatorSettings, ProgressReporter } from './types';
 import { DEFAULT_SETTINGS, TRANSLATOR_SIDEBAR_VIEW_TYPE, TRANSLATOR_SIDEBAR_DISPLAY_TEXT, TRANSLATOR_SIDEBAR_ICON } from './constants';
 import { AITranslatorSettingTab } from './ui/AITranslatorSettingTab';
 import { AITranslatorSidebarView } from './ui/AITranslatorSidebarView';
+import { ProgressModal } from './ui/ProgressModal';
 
 export default class AITranslatorPlugin extends Plugin {
     settings: AITranslatorSettings;
     statusBarItem: HTMLElement;
     private isBusy: boolean = false;
-    private abortController: AbortController | null = null;
+    private currentReporter: ProgressReporter | null = null;
 
     public getIsBusy(): boolean {
         return this.isBusy;
@@ -22,7 +23,6 @@ export default class AITranslatorPlugin extends Plugin {
     async onload() {
         await this.loadSettings();
 
-        // --- Sidebar View ---
         this.registerView(
             TRANSLATOR_SIDEBAR_VIEW_TYPE,
             (leaf) => new AITranslatorSidebarView(leaf, this)
@@ -31,7 +31,6 @@ export default class AITranslatorPlugin extends Plugin {
         ribbonIconEl.addClass('translator-ribbon-class');
         this.addCommand({ id: 'open-translator-sidebar', name: 'Open sidebar', callback: () => this.activateView() });
 
-        // --- Status Bar ---
         this.statusBarItem = this.addStatusBarItem();
         this.updateStatusBar('Ready');
 
@@ -44,9 +43,7 @@ export default class AITranslatorPlugin extends Plugin {
         this.addSettingTab(new AITranslatorSettingTab(this.app, this));
     }
 
-    onunload() {
-
-    }
+    onunload() {}
 
     async loadSettings() {
         this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
@@ -78,20 +75,24 @@ export default class AITranslatorPlugin extends Plugin {
         }
     }
 
-    getSidebarView(): AITranslatorSidebarView | null {
-        const leaf = this.app.workspace.getLeavesOfType(TRANSLATOR_SIDEBAR_VIEW_TYPE)[0];
-        if (leaf && leaf.view instanceof AITranslatorSidebarView) {
-            return leaf.view;
+    getReporter(): ProgressReporter {
+        const view = this.app.workspace.getLeavesOfType(TRANSLATOR_SIDEBAR_VIEW_TYPE)[0]?.view;
+        if (view instanceof AITranslatorSidebarView) {
+            this.app.workspace.revealLeaf(view.leaf);
+            view.clearDisplay();
+            this.currentReporter = view;
+            return view;
+        } else {
+            const modal = new ProgressModal(this.app);
+            modal.open();
+            this.currentReporter = modal;
+            return modal;
         }
-        return null;
     }
 
     cancelTranslation() {
-        if (this.abortController) {
-            this.abortController.abort();
-            this.isBusy = false;
-            this.updateStatusBar('Cancelled');
-            this.getSidebarView()?.updateStatus('Cancelled', -1);
+        if (this.currentReporter) {
+            this.currentReporter.requestCancel();
         }
     }
 
@@ -101,10 +102,8 @@ export default class AITranslatorPlugin extends Plugin {
             return;
         }
         this.isBusy = true;
-        this.abortController = new AbortController();
-        const sidebar = this.getSidebarView();
-        sidebar?.clearDisplay();
-        sidebar?.log('Starting translation...');
+        const useReporter = this.getReporter();
+        useReporter.clearDisplay();
         this.updateStatusBar('Translating...');
 
         try {
@@ -113,43 +112,29 @@ export default class AITranslatorPlugin extends Plugin {
                 throw new Error('No active file to translate.');
             }
 
-            if (!this.settings.providerSettings[this.settings.llmProvider].apiKey) {
+            const providerConfig = this.settings.providerSettings[this.settings.llmProvider];
+            if (!providerConfig || !providerConfig.apiKey) {
                 throw new Error('API key is not set for the selected provider. Please configure it in the plugin settings.');
             }
 
-            sidebar?.updateStatus('Reading file...', 10);
+            useReporter.updateStatus('Reading file...', 10);
             const fileContent = await this.app.vault.read(activeFile);
 
             const translator = createTranslator(this.settings.llmProvider);
-            const { apiKey, model, customEndpoint } = this.settings.providerSettings[this.settings.llmProvider];
             
-            let translatedContent = '';
-            let retries = 3;
-            for (let i = 0; i < retries; i++) {
-                try {
-                    sidebar?.updateStatus(`Translating (attempt ${i + 1})...`, 20 + (i * 20));
-                    translatedContent = await translator.translate(
-                        fileContent,
-                        apiKey,
-                        model,
-                        this.settings.temperature,
-                        this.settings.maxTokens,
-                        customEndpoint,
-                        this.settings.targetLanguage,
-                        this.abortController.signal
-                    );
-                    break; 
-                } catch (error) {
-                    if (this.abortController.signal.aborted) {
-                        throw new Error('Translation cancelled');
-                    }
-                    if (i === retries - 1) throw error;
-                    sidebar?.log(`Translation attempt ${i + 1} failed. Retrying...`);
-                    await new Promise(res => setTimeout(res, 2000));
-                }
+            useReporter.updateStatus(`Translating with ${this.settings.llmProvider}...`, 20);
+            const translatedContent = await translator.translate(
+                fileContent,
+                this.settings.targetLanguage,
+                this.settings,
+                useReporter
+            );
+
+            if (useReporter.cancelled) {
+                throw new Error("Translation cancelled by user.");
             }
 
-            sidebar?.updateStatus('Creating translated file...', 80);
+            useReporter.updateStatus('Creating translated file...', 80);
             const newFileName = `${activeFile.basename}.translated.md`;
             const newFilePath = `${this.settings.outputPath}/${newFileName}`;
 
@@ -159,8 +144,16 @@ export default class AITranslatorPlugin extends Plugin {
                 // Folder already exists
             }
 
-            const newFile = await this.app.vault.create(newFilePath, translatedContent);
-            sidebar?.updateStatus('Opening files...', 90);
+            const existingFile = this.app.vault.getAbstractFileByPath(newFilePath);
+            if (existingFile && existingFile instanceof TFile) {
+                await this.app.vault.modify(existingFile, translatedContent);
+            } else {
+                await this.app.vault.create(newFilePath, translatedContent);
+            }
+            
+            const newFile = this.app.vault.getAbstractFileByPath(newFilePath) as TFile;
+
+            useReporter.updateStatus('Opening files...', 90);
 
             const originalLeaf = this.app.workspace.getLeaf('split', 'horizontal');
             await originalLeaf.openFile(activeFile);
@@ -168,19 +161,24 @@ export default class AITranslatorPlugin extends Plugin {
             const translatedLeaf = this.app.workspace.getLeaf('split', 'vertical');
             await translatedLeaf.openFile(newFile);
 
-            sidebar?.updateStatus('Translation complete!', 100);
+            useReporter.updateStatus('Translation complete!', 100);
             new Notice('Translation complete.');
+            if (useReporter instanceof ProgressModal) setTimeout(() => useReporter.close(), 2000);
 
         } catch (error) {
-            if (error.message !== 'Translation cancelled') {
+            const message = error.message || "Unknown error";
+            if (useReporter.cancelled) {
+                useReporter.log('Translation cancelled by user.');
+                useReporter.updateStatus('Cancelled', -1);
+            } else {
                 console.error('Translation Error:', error);
                 new Notice('Error during translation. Check the console for details.');
-                sidebar?.log(`Error: ${error.message}`);
-                sidebar?.updateStatus('Error', -1);
+                useReporter.log(`Error: ${message}`);
+                useReporter.updateStatus('Error', -1);
             }
         } finally {
             this.isBusy = false;
-            this.abortController = null;
+            this.currentReporter = null;
             this.updateStatusBar('Ready');
         }
     }
