@@ -155,9 +155,6 @@ export default class AITranslatorPlugin extends Plugin {
 
             useReporter.updateStatus('Opening files...', 90);
 
-            const originalLeaf = this.app.workspace.getLeaf('split', 'horizontal');
-            await originalLeaf.openFile(activeFile);
-
             const translatedLeaf = this.app.workspace.getLeaf('split', 'vertical');
             await translatedLeaf.openFile(newFile);
 
